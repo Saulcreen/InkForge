@@ -1,0 +1,1485 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>INKFORGE — Estudio de Escritura</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- Google Identity Services — funciona sin backend ni Firebase -->
+<script src="https://accounts.google.com/gsi/client" async></script>
+<script>
+// =========================================================
+// GOOGLE LOGIN — Google Identity Services (GSI)
+// ⚠️ ÚNICO PASO: Reemplaza "TU_CLIENT_ID" con el tuyo de:
+//   console.cloud.google.com → APIs → Credenciales → OAuth 2.0
+//   Tipo: "Aplicación web", Origen: http://localhost o el dominio donde uses esto
+// =========================================================
+const GOOGLE_CLIENT_ID = '699307718818-5dp64v91gvn7iif97jhrit6flbt9khef.apps.googleusercontent.com';
+
+// Clave para exportar/importar datos (base64 del progreso completo)
+const STORAGE_KEY_USER = 'inkforge_google_user';
+
+let _gsiUser = null;
+
+function _getAllData() {
+  return {
+    covers:    JSON.parse(localStorage.getItem('inkforge_covers')    || '[]'),
+    chars:     JSON.parse(localStorage.getItem('inkforge_chars')     || '[]'),
+    chapters:  JSON.parse(localStorage.getItem('inkforge_chapters')  || '[{"id":1,"title":"Capítulo 1","content":"","bookmarks":[]}]'),
+    playlist:  JSON.parse(localStorage.getItem('inkforge_playlist')  || '[]'),
+    aiHistory: JSON.parse(localStorage.getItem('inkforge_ai_history')|| '[]'),
+  };
+}
+
+function _setAllData(d) {
+  if (d.covers)    localStorage.setItem('inkforge_covers',     JSON.stringify(d.covers));
+  if (d.chars)     localStorage.setItem('inkforge_chars',      JSON.stringify(d.chars));
+  if (d.chapters)  localStorage.setItem('inkforge_chapters',   JSON.stringify(d.chapters));
+  if (d.playlist)  localStorage.setItem('inkforge_playlist',   JSON.stringify(d.playlist));
+  if (d.aiHistory) localStorage.setItem('inkforge_ai_history', JSON.stringify(d.aiHistory));
+}
+
+function _showApp(user) {
+  _gsiUser = user;
+
+  // Sidebar avatar
+  const btn = document.getElementById('auth-btn');
+  if (btn && user) {
+    btn.innerHTML = user.picture
+      ? `<img src="${user.picture}" style="width:22px;height:22px;border-radius:50%;margin-right:6px;border:1px solid rgba(192,132,252,.4)">${user.given_name} <span style="opacity:.4;font-size:9px;margin-left:2px">▼</span>`
+      : `👤 ${user.given_name}`;
+    btn.title = 'Cerrar sesión';
+    btn.onclick = _logout;
+  }
+  const syncBtn = document.getElementById('sync-btn');
+  if (syncBtn && user) syncBtn.style.display = 'flex';
+
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app-root').style.display = 'flex';
+
+  setTimeout(() => {
+    if (user && window.showToast) window.showToast('✅ Bienvenido, ' + user.given_name + '!');
+    if (!user && window.showToast) window.showToast('📝 Modo invitado — progreso guardado localmente');
+  }, 600);
+}
+
+function _logout() {
+  if (!confirm('¿Cerrar sesión de Google?')) return;
+  localStorage.removeItem(STORAGE_KEY_USER);
+  _gsiUser = null;
+  // Reiniciar pantalla
+  location.reload();
+}
+
+// Callback que llama Google cuando el usuario se autentica
+function _onGoogleCredential(response) {
+  // Decodificar el JWT que devuelve Google (sin verificar firma, solo leer payload)
+  const payload = JSON.parse(atob(response.credential.split('.')[1]));
+  // Guardar usuario localmente
+  localStorage.setItem(STORAGE_KEY_USER, JSON.stringify({
+    sub: payload.sub, name: payload.name, given_name: payload.given_name,
+    picture: payload.picture, email: payload.email
+  }));
+  _showApp(payload);
+}
+
+// Exportar progreso como archivo JSON descargable
+window._exportProgress = () => {
+  const data = _getAllData();
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'inkforge_progreso_' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  window.showToast && window.showToast('💾 Progreso exportado');
+};
+
+// Importar progreso desde archivo JSON
+window._importProgress = () => {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.json';
+  inp.onchange = e => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = ev => {
+      try {
+        const d = JSON.parse(ev.target.result);
+        _setAllData(d);
+        window.showToast && window.showToast('✅ Progreso importado');
+        setTimeout(() => location.reload(), 800);
+      } catch { window.showToast && window.showToast('❌ Archivo inválido'); }
+    };
+    r.readAsText(f);
+  };
+  inp.click();
+};
+
+window._continueGuest = () => _showApp(null);
+
+// Al cargar: ver si ya hay sesión guardada
+window.addEventListener('load', () => {
+  const saved = localStorage.getItem(STORAGE_KEY_USER);
+  if (saved) {
+    try { _showApp(JSON.parse(saved)); return; } catch {}
+  }
+  // Mostrar pantalla de login (ya visible por defecto)
+
+  // Inicializar GSI si hay CLIENT_ID configurado
+  if (GOOGLE_CLIENT_ID !== 'TU_CLIENT_ID.apps.googleusercontent.com') {
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: _onGoogleCredential,
+      auto_select: false,
+    });
+  }
+});
+
+window._googleLogin = () => {
+  if (GOOGLE_CLIENT_ID === 'TU_CLIENT_ID.apps.googleusercontent.com') {
+    // Sin configurar — simular login de demostración
+    const demoUser = {
+      sub: 'demo_' + Date.now(),
+      name: 'Usuario Demo',
+      given_name: 'Usuario',
+      picture: '',
+      email: 'demo@inkforge.local'
+    };
+    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(demoUser));
+    _showApp(demoUser);
+    return;
+  }
+  google.accounts.id.prompt((notification) => {
+    if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+      // Si el One Tap no aparece, usar popup
+      google.accounts.id.renderButton(
+        document.getElementById('login-google-btn'),
+        { theme: 'filled_black', size: 'large', width: 320, text: 'continue_with' }
+      );
+    }
+  });
+};
+
+window._syncToCloud = () => {
+  // Sin backend real: exportar como respaldo
+  window._exportProgress();
+};
+</script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0d0d12;--bg2:#13131b;--bg3:#1a1a26;--bg4:#20202e;
+  --border:#2a2a3e;--border2:#383855;
+  --text:#e8e8f0;--text2:#9999b8;--text3:#5a5a7a;
+  --accent:#c084fc;--accent2:#a855f7;--accent3:#7c3aed;
+  --gold:#f59e0b;--teal:#2dd4bf;--rose:#f472b6;--blue:#60a5fa;
+  --green:#4ade80;--red:#f87171;
+  --font-serif:'Playfair Display',Georgia,serif;
+  --font-sans:'DM Sans',sans-serif;
+  --font-mono:'DM Mono',monospace;
+  --editor-bg:#0d0d12;--editor-text:#e8e8f0;--editor-accent:#c084fc;
+  --editor-font:var(--font-sans);--editor-size:16px;--editor-line:1.8;
+}
+body{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+
+/* SIDEBAR */
+#sidebar{position:fixed;left:0;top:0;bottom:0;width:220px;background:var(--bg2);border-right:1px solid var(--border);z-index:100;display:flex;flex-direction:column;transition:.3s}
+.logo{padding:20px 18px 16px;border-bottom:1px solid var(--border)}
+.logo h1{font-family:var(--font-serif);font-size:22px;letter-spacing:1px;background:linear-gradient(135deg,var(--accent),var(--rose));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.logo span{font-size:10px;color:var(--text3);letter-spacing:3px;text-transform:uppercase}
+nav{flex:1;padding:12px 8px;overflow-y:auto}
+.nav-section{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:2px;padding:16px 10px 6px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text2);transition:.15s;margin-bottom:2px}
+.nav-item:hover{background:var(--bg3);color:var(--text)}
+.nav-item.active{background:rgba(192,132,252,.12);color:var(--accent);border:1px solid rgba(192,132,252,.2)}
+.nav-item .icon{width:16px;height:16px;opacity:.8;flex-shrink:0}
+
+/* MAIN */
+#main{margin-left:220px;min-height:100vh;display:flex;flex-direction:column}
+.panel{display:none;flex:1;flex-direction:column}
+.panel.active{display:flex}
+
+/* TOP BAR */
+.topbar{padding:14px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg2)}
+.topbar h2{font-family:var(--font-serif);font-size:18px;font-weight:400}
+.topbar-actions{display:flex;gap:8px}
+.btn{padding:7px 16px;border-radius:8px;border:1px solid var(--border2);background:transparent;color:var(--text);font-size:13px;cursor:pointer;transition:.15s;font-family:var(--font-sans)}
+.btn:hover{background:var(--bg3);border-color:var(--accent);color:var(--accent)}
+.btn-accent{background:rgba(192,132,252,.15);border-color:var(--accent);color:var(--accent)}
+.btn-accent:hover{background:rgba(192,132,252,.25)}
+
+/* COVER PANEL */
+#panel-cover .content{padding:24px;flex:1;overflow-y:auto}
+.cover-upload-zone{border:2px dashed var(--border2);border-radius:16px;padding:60px;text-align:center;cursor:pointer;transition:.2s;position:relative;overflow:hidden}
+.cover-upload-zone:hover{border-color:var(--accent);background:rgba(192,132,252,.04)}
+.cover-upload-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.cover-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:16px;margin-top:20px}
+.cover-card{background:var(--bg3);border-radius:12px;overflow:hidden;border:1px solid var(--border);aspect-ratio:2/3;position:relative;cursor:pointer;transition:.2s}
+.cover-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+.cover-card img{width:100%;height:100%;object-fit:cover}
+.cover-card .cover-actions{position:absolute;inset:0;background:rgba(0,0,0,.6);opacity:0;display:flex;align-items:center;justify-content:center;gap:8px;transition:.2s}
+.cover-card:hover .cover-actions{opacity:1}
+.cover-label{position:absolute;bottom:0;left:0;right:0;padding:8px;background:linear-gradient(transparent,rgba(0,0,0,.8));font-size:11px;color:var(--text2)}
+
+/* CHARACTERS */
+.chars-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
+.char-card{background:var(--bg3);border-radius:14px;border:1px solid var(--border);padding:18px;cursor:pointer;transition:.2s}
+.char-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+.char-avatar{width:60px;height:60px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:12px}
+.char-name{font-size:15px;font-weight:600;margin-bottom:4px}
+.char-role{font-size:12px;color:var(--text3);margin-bottom:10px}
+.char-tag{display:inline-block;padding:3px 8px;border-radius:6px;font-size:11px;background:rgba(192,132,252,.1);color:var(--accent);border:1px solid rgba(192,132,252,.2);margin:2px}
+
+/* TREE */
+#tree-container{flex:1;overflow:auto;padding:24px;position:relative;min-height:400px}
+canvas#treeCanvas{border-radius:12px}
+
+/* NARRATOR */
+.narr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;padding:24px}
+.narr-card{background:var(--bg3);border-radius:14px;border:1px solid var(--border);padding:20px;cursor:pointer;transition:.2s}
+.narr-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+.narr-type{font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:2px;margin-bottom:8px}
+.narr-title{font-family:var(--font-serif);font-size:18px;margin-bottom:8px}
+.narr-desc{font-size:13px;color:var(--text2);line-height:1.7}
+.narr-examples{margin-top:12px;padding:12px;background:var(--bg4);border-radius:8px;font-size:12px;color:var(--text3);font-style:italic;border-left:2px solid var(--accent)}
+
+/* EDITOR */
+#panel-editor{background:var(--editor-bg)}
+.editor-toolbar{padding:10px 20px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.tool-btn{padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text2);font-size:12px;cursor:pointer;transition:.15s;font-family:var(--font-mono)}
+.tool-btn:hover{background:var(--bg3);color:var(--text)}
+.tool-sep{width:1px;height:20px;background:var(--border);margin:0 4px}
+.editor-settings{display:flex;gap:12px;align-items:center;margin-left:auto}
+.editor-settings label{font-size:11px;color:var(--text3)}
+.editor-settings select,.editor-settings input[type=range]{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px;cursor:pointer}
+#editor-area-wrap{flex:1;overflow-y:auto;padding:40px 60px;display:flex;justify-content:center}
+#editor-area{width:100%;max-width:720px;min-height:600px;font-family:var(--editor-font);font-size:var(--editor-size);line-height:var(--editor-line);color:var(--editor-text);background:transparent;border:none;outline:none;resize:none;caret-color:var(--accent)}
+#editor-area::placeholder{color:var(--text3);font-style:italic}
+.editor-footer{padding:10px 24px;background:var(--bg2);border-top:1px solid var(--border);display:flex;gap:20px;font-size:12px;color:var(--text3)}
+.chapter-list{width:200px;background:var(--bg2);border-right:1px solid var(--border);padding:12px;overflow-y:auto;flex-shrink:0}
+.chapter-item{padding:8px 10px;border-radius:8px;font-size:13px;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:8px}
+.chapter-item:hover{background:var(--bg3)}
+.chapter-item.active{background:rgba(192,132,252,.1);color:var(--accent)}
+.chapter-item .progress-bar{height:2px;background:var(--border);border-radius:2px;flex:1;overflow:hidden}
+.chapter-item .progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:.3s}
+.chapter-mark{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.editor-body{flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+/* BOOKMARK */
+.bookmark-bar{padding:10px 20px;background:var(--bg4);border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.bookmark-item{display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;background:var(--bg3);border:1px solid var(--border);font-size:12px;cursor:pointer;transition:.15s}
+.bookmark-item:hover{border-color:var(--gold);color:var(--gold)}
+.bookmark-dot{width:8px;height:8px;border-radius:50%}
+
+/* DICTIONARY */
+.dict-panel{padding:24px;flex:1;overflow-y:auto}
+.dict-search{display:flex;gap:8px;margin-bottom:24px}
+.dict-search input{flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:12px 16px;color:var(--text);font-size:15px;font-family:var(--font-sans);outline:none;transition:.2s}
+.dict-search input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(192,132,252,.1)}
+.dict-results{display:grid;gap:12px}
+.dict-word{font-family:var(--font-serif);font-size:24px;color:var(--accent);margin-bottom:4px}
+.dict-type{font-size:12px;color:var(--text3);font-style:italic;margin-bottom:8px}
+.dict-def{font-size:14px;color:var(--text2);line-height:1.7;margin-bottom:12px}
+.syns-grid{display:flex;flex-wrap:wrap;gap:6px}
+.syn-tag{padding:5px 12px;border-radius:20px;background:var(--bg3);border:1px solid var(--border2);font-size:13px;cursor:pointer;transition:.15s}
+.syn-tag:hover{border-color:var(--accent);color:var(--accent);background:rgba(192,132,252,.08)}
+
+/* AI ASSISTANT */
+.ai-panel{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.ai-history{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:16px}
+.ai-msg{display:flex;gap:12px;max-width:680px}
+.ai-msg.user{flex-direction:row-reverse;align-self:flex-end}
+.ai-msg.user .ai-bubble{background:rgba(192,132,252,.15);border-color:rgba(192,132,252,.3);color:var(--text)}
+.ai-bubble{background:var(--bg3);border:1px solid var(--border);border-radius:16px;padding:12px 16px;font-size:14px;line-height:1.7;color:var(--text2)}
+.ai-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.ai-avatar.bot{background:rgba(192,132,252,.15);border:1px solid rgba(192,132,252,.3)}
+.ai-avatar.user{background:rgba(45,212,191,.15);border:1px solid rgba(45,212,191,.3)}
+.ai-input-bar{padding:16px 24px;background:var(--bg2);border-top:1px solid var(--border);display:flex;gap:10px}
+.ai-input{flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px 16px;color:var(--text);font-size:14px;font-family:var(--font-sans);outline:none;resize:none;min-height:44px;max-height:120px;transition:.2s}
+.ai-input:focus{border-color:var(--accent)}
+.ai-send{width:44px;height:44px;border-radius:10px;background:var(--accent3);border:none;color:#fff;font-size:18px;cursor:pointer;transition:.15s;display:flex;align-items:center;justify-content:center}
+.ai-send:hover{background:var(--accent2)}
+.ai-prompts{display:flex;flex-wrap:wrap;gap:6px;padding:0 24px 12px}
+.ai-prompt-chip{padding:6px 14px;border-radius:20px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:12px;cursor:pointer;transition:.15s;font-family:var(--font-sans)}
+.ai-prompt-chip:hover{border-color:var(--accent);color:var(--accent)}
+.ai-typing{display:flex;gap:4px;align-items:center;padding:12px 16px}
+.ai-typing span{width:6px;height:6px;border-radius:50%;background:var(--accent);opacity:.4;animation:typing .8s ease-in-out infinite}
+.ai-typing span:nth-child(2){animation-delay:.15s}
+.ai-typing span:nth-child(3){animation-delay:.3s}
+@keyframes typing{0%,100%{opacity:.4;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
+
+/* CORRECTOR */
+.corrector-panel{padding:24px;flex:1;overflow-y:auto}
+.corrector-zone{min-height:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:20px;font-size:14px;line-height:1.8;color:var(--text);outline:none;font-family:var(--font-sans)}
+.corrector-zone:focus{border-color:var(--accent)}
+.correction{background:rgba(248,113,113,.15);text-decoration:underline wavy var(--red);cursor:pointer;border-radius:3px;padding:0 1px;position:relative}
+.correction.style{background:rgba(250,158,11,.15);text-decoration:underline wavy var(--gold)}
+.correction.improve{background:rgba(96,165,250,.15);text-decoration:underline wavy var(--blue)}
+.corrections-list{margin-top:20px;display:flex;flex-direction:column;gap:10px}
+.correction-item{background:var(--bg3);border-radius:12px;border:1px solid var(--border);padding:14px 16px;display:flex;gap:12px;align-items:flex-start}
+.cor-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.cor-icon.err{background:rgba(248,113,113,.15);color:var(--red)}
+.cor-icon.warn{background:rgba(250,158,11,.15);color:var(--gold)}
+.cor-icon.tip{background:rgba(96,165,250,.15);color:var(--blue)}
+.cor-text{font-size:13px;color:var(--text2);line-height:1.6}
+.cor-fix{font-size:12px;margin-top:4px;color:var(--green);font-family:var(--font-mono)}
+
+/* MUSIC */
+.music-panel{padding:24px;flex:1;overflow-y:auto}
+.music-add-bar{display:flex;gap:10px;margin-bottom:24px}
+.music-add-bar input{flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:11px 16px;color:var(--text);font-size:14px;font-family:var(--font-sans);outline:none}
+.music-add-bar input:focus{border-color:var(--accent)}
+.music-player{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:20px}
+.music-player-inner{display:flex;gap:20px;align-items:center}
+.album-art{width:70px;height:70px;border-radius:12px;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0;overflow:hidden}
+.album-art img{width:100%;height:100%;object-fit:cover}
+.music-info{flex:1}
+.music-title{font-size:16px;font-weight:600;margin-bottom:4px}
+.music-sub{font-size:13px;color:var(--text3)}
+.music-controls{display:flex;gap:12px;align-items:center;margin-top:12px}
+.mc-btn{width:36px;height:36px;border-radius:50%;border:1px solid var(--border2);background:transparent;color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:.15s}
+.mc-btn:hover{border-color:var(--accent);color:var(--accent)}
+.mc-btn.play{background:var(--accent3);border-color:var(--accent3);color:#fff;width:42px;height:42px;font-size:16px}
+.mc-btn.play:hover{background:var(--accent2)}
+.progress-track{flex:1;height:4px;background:var(--border);border-radius:2px;cursor:pointer;position:relative}
+.progress-fill-m{height:100%;background:var(--accent);border-radius:2px;transition:.1s}
+.volume-wrap{display:flex;align-items:center;gap:8px}
+.volume-icon{font-size:14px;color:var(--text3)}
+.vol-slider{width:80px;-webkit-appearance:none;height:4px;border-radius:2px;background:var(--border);outline:none;cursor:pointer}
+.vol-slider::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer}
+.playlist{display:grid;gap:8px}
+.playlist-item{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;transition:.2s}
+.playlist-item:hover{border-color:var(--accent);transform:translateX(3px)}
+.playlist-item.active{border-color:var(--accent);background:rgba(192,132,252,.06)}
+.pl-num{width:24px;font-size:12px;color:var(--text3);text-align:center;font-family:var(--font-mono)}
+.pl-thumb{width:40px;height:40px;border-radius:8px;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;overflow:hidden}
+.pl-thumb img{width:100%;height:100%;object-fit:cover}
+.pl-info{flex:1}
+.pl-title{font-size:14px;margin-bottom:2px}
+.pl-type{font-size:11px;color:var(--text3)}
+.pl-dur{font-size:12px;color:var(--text3);font-family:var(--font-mono)}
+.pl-del{width:28px;height:28px;border-radius:6px;border:1px solid transparent;background:transparent;color:var(--text3);cursor:pointer;transition:.15s;display:flex;align-items:center;justify-content:center;font-size:14px}
+.pl-del:hover{border-color:var(--red);color:var(--red)}
+iframe.yt-embed{display:none}
+
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:.2s;backdrop-filter:blur(4px)}
+.modal-overlay.open{opacity:1;pointer-events:all}
+.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:20px;padding:28px;width:90%;max-width:560px;max-height:80vh;overflow-y:auto;transform:translateY(20px);transition:.2s}
+.modal-overlay.open .modal{transform:translateY(0)}
+.modal h3{font-family:var(--font-serif);font-size:22px;margin-bottom:6px}
+.modal-sub{font-size:13px;color:var(--text3);margin-bottom:20px}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:12px;color:var(--text3);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px}
+.form-group input,.form-group textarea,.form-group select{width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:10px 14px;color:var(--text);font-size:14px;font-family:var(--font-sans);outline:none;transition:.2s}
+.form-group input:focus,.form-group textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(192,132,252,.1)}
+.form-group textarea{resize:vertical;min-height:80px}
+.color-row{display:flex;gap:8px;flex-wrap:wrap}
+.color-opt{width:32px;height:32px;border-radius:50%;cursor:pointer;transition:.2s;border:2px solid transparent}
+.color-opt:hover,.color-opt.sel{border-color:#fff;transform:scale(1.15)}
+.modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+.empty-state{text-align:center;padding:60px 20px;color:var(--text3)}
+.empty-state .icon{font-size:48px;margin-bottom:16px}
+.empty-state h3{font-family:var(--font-serif);font-size:20px;color:var(--text2);margin-bottom:8px}
+.empty-state p{font-size:14px;line-height:1.6}
+
+/* SCROLL */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+
+/* AUTH */
+#auth-btn{display:flex;align-items:center;padding:7px 14px;border-radius:8px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:12px;cursor:pointer;transition:.2s;white-space:nowrap;font-family:var(--font-sans)}
+#auth-btn:hover{border-color:var(--accent);background:rgba(192,132,252,.1)}
+#sync-btn{display:none;align-items:center;gap:5px;padding:6px 12px;border-radius:8px;border:1px solid rgba(45,212,191,.3);background:rgba(45,212,191,.08);color:var(--teal);font-size:12px;cursor:pointer;transition:.2s;font-family:var(--font-sans)}
+#sync-btn:hover{background:rgba(45,212,191,.18)}
+.auth-area{display:flex;gap:8px;align-items:center;padding:12px 10px;border-top:1px solid var(--border);margin-top:auto}
+
+/* YOUTUBE MODAL */
+#yt-modal{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2000;display:none;align-items:center;justify-content:center;backdrop-filter:blur(8px)}
+#yt-modal.open{display:flex}
+#yt-modal-inner{background:var(--bg2);border:1px solid var(--border2);border-radius:20px;padding:20px;width:90%;max-width:700px}
+#yt-modal-inner iframe{width:100%;aspect-ratio:16/9;border-radius:12px;border:none}
+.yt-modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.yt-modal-title{font-family:var(--font-serif);font-size:16px;color:var(--text)}
+.yt-modal-close{width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center}
+.yt-modal-close:hover{border-color:var(--red);color:var(--red)}
+.yt-warning{margin-top:12px;padding:10px 14px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:8px;font-size:12px;color:var(--gold);display:flex;gap:8px;align-items:center}
+
+/* HIGHLIGHT COLORS */
+.hl-yellow{background:rgba(245,158,11,.25);border-radius:3px}
+.hl-purple{background:rgba(192,132,252,.25);border-radius:3px}
+.hl-blue{background:rgba(96,165,250,.25);border-radius:3px}
+.hl-green{background:rgba(74,222,128,.25);border-radius:3px}
+.hl-rose{background:rgba(244,114,182,.25);border-radius:3px}
+
+/* TAGS */
+.section-head{padding:20px 24px 0;display:flex;justify-content:space-between;align-items:center}
+.section-head h3{font-family:var(--font-serif);font-size:18px;font-weight:400}
+.tag{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:11px;border:1px solid;cursor:pointer}
+.tag-purple{color:var(--accent);border-color:rgba(192,132,252,.3);background:rgba(192,132,252,.08)}
+.tag-teal{color:var(--teal);border-color:rgba(45,212,191,.3);background:rgba(45,212,191,.08)}
+.tag-gold{color:var(--gold);border-color:rgba(245,158,11,.3);background:rgba(245,158,11,.08)}
+.tag-rose{color:var(--rose);border-color:rgba(244,114,182,.3);background:rgba(244,114,182,.08)}
+.tag-blue{color:var(--blue);border-color:rgba(96,165,250,.3);background:rgba(96,165,250,.08)}
+
+.content{flex:1;overflow-y:auto;padding:24px}
+
+/* LOADING */
+.loading{display:flex;gap:6px;align-items:center;justify-content:center;padding:30px;color:var(--text3);font-size:13px}
+.loading-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:typing .8s ease-in-out infinite}
+.loading-dot:nth-child(2){animation-delay:.15s}
+.loading-dot:nth-child(3){animation-delay:.3s}
+
+/* ===== LOGIN SCREEN ===== */
+#login-screen{
+  position:fixed;inset:0;z-index:9999;
+  background:var(--bg);
+  display:flex;align-items:center;justify-content:center;
+  flex-direction:column;
+}
+.login-bg{
+  position:absolute;inset:0;overflow:hidden;pointer-events:none;
+}
+.login-orb{
+  position:absolute;border-radius:50%;filter:blur(80px);opacity:.18;
+}
+.login-orb-1{width:500px;height:500px;background:var(--accent3);top:-100px;left:-100px;animation:orbFloat 12s ease-in-out infinite}
+.login-orb-2{width:400px;height:400px;background:var(--rose);bottom:-80px;right:-80px;animation:orbFloat 15s ease-in-out infinite reverse}
+.login-orb-3{width:300px;height:300px;background:var(--teal);top:40%;left:55%;animation:orbFloat 10s ease-in-out infinite 2s}
+@keyframes orbFloat{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(30px,-30px) scale(1.05)}}
+
+.login-card{
+  position:relative;z-index:1;
+  background:rgba(19,19,27,.85);
+  border:1px solid var(--border2);
+  border-radius:28px;
+  padding:52px 48px;
+  width:90%;max-width:420px;
+  text-align:center;
+  backdrop-filter:blur(20px);
+  box-shadow:0 32px 80px rgba(0,0,0,.5);
+  animation:loginFadeIn .5s ease;
+}
+@keyframes loginFadeIn{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+
+.login-logo{
+  font-family:var(--font-serif);font-size:38px;font-weight:700;letter-spacing:2px;
+  background:linear-gradient(135deg,var(--accent),var(--rose));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  margin-bottom:6px;
+}
+.login-tagline{font-size:12px;color:var(--text3);letter-spacing:3px;text-transform:uppercase;margin-bottom:40px}
+
+.login-headline{font-family:var(--font-serif);font-size:22px;font-weight:400;color:var(--text);margin-bottom:8px;line-height:1.4}
+.login-sub{font-size:13px;color:var(--text3);line-height:1.7;margin-bottom:36px}
+
+.login-features{display:flex;flex-direction:column;gap:10px;margin-bottom:36px;text-align:left}
+.login-feature{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--text2)}
+.login-feature-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+
+#login-google-btn{
+  width:100%;padding:14px 20px;
+  border-radius:14px;
+  border:1px solid rgba(192,132,252,.4);
+  background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(192,132,252,.15));
+  color:var(--text);
+  font-size:15px;font-weight:500;
+  cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:12px;
+  transition:.2s;font-family:var(--font-sans);
+  margin-bottom:12px;
+}
+#login-google-btn:hover:not(:disabled){
+  background:linear-gradient(135deg,rgba(124,58,237,.4),rgba(192,132,252,.25));
+  border-color:var(--accent);
+  transform:translateY(-1px);
+  box-shadow:0 8px 24px rgba(192,132,252,.2);
+}
+#login-google-btn:disabled{opacity:.6;cursor:not-allowed}
+
+#login-guest-btn{
+  width:100%;padding:11px 20px;
+  border-radius:14px;
+  border:1px solid var(--border);
+  background:transparent;
+  color:var(--text3);
+  font-size:13px;cursor:pointer;
+  transition:.2s;font-family:var(--font-sans);
+}
+#login-guest-btn:hover{border-color:var(--border2);color:var(--text2);background:var(--bg3)}
+
+.login-note{margin-top:20px;font-size:11px;color:var(--text3);line-height:1.6}
+
+.login-spinner{
+  width:16px;height:16px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.3);
+  border-top-color:#fff;
+  animation:spin .7s linear infinite;display:inline-block;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<!-- ===== LOGIN SCREEN ===== -->
+<div id="login-screen" style="display:flex">
+  <div class="login-bg">
+    <div class="login-orb login-orb-1"></div>
+    <div class="login-orb login-orb-2"></div>
+    <div class="login-orb login-orb-3"></div>
+  </div>
+  <div class="login-card">
+    <div class="login-logo">INKFORGE</div>
+    <div class="login-tagline">Estudio Creativo</div>
+
+    <div class="login-headline">Tu historia comienza aquí</div>
+    <div class="login-sub">Inicia sesión para guardar tu progreso en la nube y acceder desde cualquier dispositivo.</div>
+
+    <div class="login-features">
+      <div class="login-feature">
+        <div class="login-feature-icon" style="background:rgba(192,132,252,.15);color:var(--accent)">🔒</div>
+        <span>Tu sesión se recuerda en este navegador automáticamente</span>
+      </div>
+      <div class="login-feature">
+        <div class="login-feature-icon" style="background:rgba(45,212,191,.15);color:var(--teal)">✨</div>
+        <span>Asistente IA, corrector y diccionario con Gemini</span>
+      </div>
+      <div class="login-feature">
+        <div class="login-feature-icon" style="background:rgba(244,114,182,.15);color:var(--rose)">💾</div>
+        <span>Exporta e importa tu progreso como respaldo</span>
+      </div>
+    </div>
+
+    <button id="login-google-btn" onclick="window._googleLogin()">
+      <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      Continuar con Google
+    </button>
+
+    <button id="login-guest-btn" onclick="window._continueGuest && window._continueGuest()">
+      Continuar sin cuenta →
+    </button>
+
+    <div class="login-note">
+      Con Google tu sesión se recuerda en este navegador. Usa el botón <b style="color:var(--text2)">💾 Exportar</b> en la app para hacer copias de seguridad de tu progreso en un archivo JSON.<br><br>
+      Sin cuenta, el progreso se guarda solo en este navegador.
+    </div>
+  </div>
+</div>
+
+<!-- ===== APP ===== -->
+<div id="app-root" style="display:none;min-height:100vh">
+
+<!-- SIDEBAR -->
+<div id="sidebar">
+  <div class="logo">
+    <h1>INKFORGE</h1>
+    <span>Estudio Creativo</span>
+  </div>
+  <nav>
+    <div class="nav-section">Obra</div>
+    <div class="nav-item active" onclick="showPanel('cover')">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></svg>
+      Portadas
+    </div>
+    <div class="nav-item" onclick="showPanel('chars')">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><circle cx="19" cy="7" r="2"/><path d="M21 21v-1a2 2 0 0 0-2-2h-1"/></svg>
+      Personajes
+    </div>
+    <div class="nav-item" onclick="showPanel('tree')">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v4M8 7H4a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h4M16 7h4a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-4M8 11v2a4 4 0 0 0 8 0v-2M12 17v4"/></svg>
+      Árbol Genealógico
+    </div>
+    <div class="nav-section">Escritura</div>
+    <div class="nav-item" onclick="showPanel('narrator')">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22c6 0 10-4 10-10S18 2 12 2 2 6 2 12c0 2 .5 3.9 1.4 5.5L2 22l4.5-1.4A9.9 9.9 0 0 0 12 22Z"/></svg>
+      Tipos Narrativos
+    </div>
+    <div class="nav-item" onclick="showPanel('editor')">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/></svg>
+      Editor
+    </div>
+    <div class="nav-item" onclick="showPanel('dict')">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15Z"/></svg>
+      Diccionario
+    </div>
+    <div class="nav-section">Herramientas</div>
+    <div class="nav-item" onclick="showPanel('ai')">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/></svg>
+      Asistente IA
+    </div>
+    <div class="nav-item" onclick="showPanel('corrector')">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 12 2 2 4-4M7.835 4.697a3.42 3.42 0 0 0 1.946-.806 3.42 3.42 0 0 1 4.438 0 3.42 3.42 0 0 0 1.946.806 3.42 3.42 0 0 1 3.138 3.138 3.42 3.42 0 0 0 .806 1.946 3.42 3.42 0 0 1 0 4.438 3.42 3.42 0 0 0-.806 1.946 3.42 3.42 0 0 1-3.138 3.138 3.42 3.42 0 0 0-1.946.806 3.42 3.42 0 0 1-4.438 0 3.42 3.42 0 0 0-1.946-.806 3.42 3.42 0 0 1-3.138-3.138 3.42 3.42 0 0 0-.806-1.946 3.42 3.42 0 0 1 0-4.438 3.42 3.42 0 0 0 .806-1.946 3.42 3.42 0 0 1 3.138-3.138Z"/></svg>
+      Corrector
+    </div>
+    <div class="nav-item" onclick="showPanel('music')">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18V5l12-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm12 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></svg>
+      Música
+    </div>
+  </nav>
+  <div class="auth-area">
+    <button id="auth-btn" onclick="window._logout && window._logout()" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;flex-shrink:0"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>Cuenta</span>
+    </button>
+    <button id="sync-btn" onclick="window._exportProgress()" title="Exportar progreso como archivo JSON" style="display:none">
+      💾
+    </button>
+    <button onclick="window._importProgress()" title="Importar progreso desde archivo JSON" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text3);cursor:pointer;font-size:14px;transition:.15s;display:flex;align-items:center;justify-content:center" onmouseover="this.style.borderColor='var(--teal)';this.style.color='var(--teal)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text3)'">
+      📂
+    </button>
+  </div>
+</div>
+
+<!-- YOUTUBE MODAL -->
+<div id="yt-modal">
+  <div id="yt-modal-inner">
+    <div class="yt-modal-head">
+      <div class="yt-modal-title" id="yt-modal-title">🎵 Reproduciendo</div>
+      <button class="yt-modal-close" onclick="closeYtModal()">✕</button>
+    </div>
+    <iframe id="yt-modal-frame" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+    <div class="yt-warning">⚠️ Si el video no carga, <a id="yt-open-link" href="#" target="_blank" style="color:var(--gold);text-decoration:underline">ábrelo en YouTube directamente</a> — algunos videos bloquean la reproducción embebida.</div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+
+  <!-- PORTADAS -->
+  <div id="panel-cover" class="panel active">
+    <div class="topbar">
+      <h2>📚 Portadas de la Obra</h2>
+      <div class="topbar-actions">
+        <button class="btn btn-accent" onclick="document.getElementById('coverInput').click()">+ Subir Portada</button>
+      </div>
+    </div>
+    <div class="content">
+      <div class="cover-upload-zone" onclick="document.getElementById('coverInput').click()">
+        <input type="file" id="coverInput" accept="image/*" multiple onchange="handleCoverUpload(event)">
+        <div style="font-size:48px;margin-bottom:16px">🖼️</div>
+        <p style="font-size:16px;color:var(--text2);margin-bottom:6px">Arrastra o haz clic para subir portadas</p>
+        <p style="font-size:13px;color:var(--text3)">JPG, PNG, WEBP — hasta 10MB por imagen</p>
+      </div>
+      <div id="cover-grid" class="cover-grid" style="display:none"></div>
+      <div id="cover-empty" class="empty-state" style="display:none">
+        <div class="icon">🎨</div>
+        <h3>Sin portadas aún</h3>
+        <p>Sube la portada de tu obra para visualizarla aquí</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- PERSONAJES -->
+  <div id="panel-chars" class="panel">
+    <div class="topbar">
+      <h2>👥 Personajes</h2>
+      <div class="topbar-actions">
+        <button class="btn btn-accent" onclick="openCharModal()">+ Nuevo Personaje</button>
+      </div>
+    </div>
+    <div class="content">
+      <div id="chars-container">
+        <div class="empty-state">
+          <div class="icon">🧑‍🤝‍🧑</div>
+          <h3>Construye tu elenco</h3>
+          <p>Agrega personajes con su historia, rol y rasgos únicos</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ÁRBOL -->
+  <div id="panel-tree" class="panel">
+    <div class="topbar">
+      <h2>🌳 Árbol Genealógico</h2>
+      <div class="topbar-actions">
+        <button class="btn" onclick="renderTree()">🔄 Actualizar</button>
+        <button class="btn btn-accent" onclick="openCharModal()">+ Personaje</button>
+      </div>
+    </div>
+    <div id="tree-container">
+      <canvas id="treeCanvas"></canvas>
+      <div id="tree-empty" class="empty-state">
+        <div class="icon">🌳</div>
+        <h3>Árbol vacío</h3>
+        <p>Agrega personajes con relaciones para generar el árbol</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- TIPOS NARRATIVOS -->
+  <div id="panel-narrator" class="panel">
+    <div class="topbar"><h2>📖 Tipos de Narración</h2></div>
+    <div class="narr-grid" id="narr-grid"></div>
+  </div>
+
+  <!-- EDITOR -->
+  <div id="panel-editor" class="panel" style="flex-direction:row">
+    <div class="chapter-list" id="chapter-list">
+      <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:2px;padding:8px 10px 12px">Capítulos</div>
+      <div id="chapters-ul"></div>
+      <button class="btn" style="width:100%;margin-top:12px;font-size:12px" onclick="addChapter()">+ Capítulo</button>
+    </div>
+    <div class="editor-body">
+      <div class="editor-toolbar">
+        <button class="tool-btn" onclick="fmt('bold')"><b>B</b></button>
+        <button class="tool-btn" onclick="fmt('italic')"><i>I</i></button>
+        <button class="tool-btn" onclick="fmt('underline')"><u>U</u></button>
+        <div class="tool-sep"></div>
+        <button class="tool-btn" onclick="highlight('hl-yellow')" title="Resaltado amarillo">🟡</button>
+        <button class="tool-btn" onclick="highlight('hl-purple')" title="Resaltado morado">🟣</button>
+        <button class="tool-btn" onclick="highlight('hl-blue')" title="Resaltado azul">🔵</button>
+        <button class="tool-btn" onclick="highlight('hl-green')" title="Resaltado verde">🟢</button>
+        <button class="tool-btn" onclick="highlight('hl-rose')" title="Resaltado rosa">🌸</button>
+        <div class="tool-sep"></div>
+        <button class="tool-btn" onclick="addBookmark()" title="Marcar posición">🔖 Marcar</button>
+        <div class="editor-settings">
+          <label>Fuente</label>
+          <select onchange="changeFont(this.value)">
+            <option value="'DM Sans',sans-serif">DM Sans</option>
+            <option value="'Playfair Display',serif">Playfair</option>
+            <option value="'Courier New',monospace">Courier</option>
+            <option value="Georgia,serif">Georgia</option>
+          </select>
+          <label>Tamaño</label>
+          <input type="range" min="12" max="22" value="16" oninput="changeSize(this.value)">
+          <label>Fondo</label>
+          <select onchange="changeBg(this.value)">
+            <option value="#0d0d12">Oscuro</option>
+            <option value="#1a1208">Sepia</option>
+            <option value="#ffffff">Blanco</option>
+            <option value="#0a1628">Noche</option>
+          </select>
+          <label>Color texto</label>
+          <select onchange="changeTextColor(this.value)">
+            <option value="#e8e8f0">Claro</option>
+            <option value="#2d1b00">Oscuro</option>
+            <option value="#1a1a2e">Navy</option>
+          </select>
+        </div>
+      </div>
+      <div class="bookmark-bar" id="bookmark-bar">
+        <span style="font-size:12px;color:var(--text3)">🔖 Marcadores:</span>
+        <span id="bookmark-list" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+      </div>
+      <div id="editor-area-wrap">
+        <div id="editor-area" contenteditable="true" spellcheck="true" placeholder="Comienza a escribir tu historia aquí...&#10;&#10;El cursor del destino está en tus manos..." oninput="updateWordCount()" onkeydown="editorKeydown(event)"></div>
+      </div>
+      <div class="editor-footer">
+        <span id="word-count">0 palabras</span>
+        <span id="char-count">0 caracteres</span>
+        <span id="reading-time">~0 min lectura</span>
+        <button class="btn" style="margin-left:auto;padding:4px 14px;font-size:12px" onclick="saveChapter()">💾 Guardar</button>
+        <button class="btn" style="padding:4px 14px;font-size:12px" onclick="sendToCorrector()">✅ Corregir Capítulo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DICCIONARIO -->
+  <div id="panel-dict" class="panel">
+    <div class="topbar"><h2>📘 Diccionario & Sinónimos</h2></div>
+    <div class="dict-panel">
+      <div class="dict-search">
+        <input type="text" id="dict-input" placeholder="Busca cualquier palabra en español — sinónimos, definición, ejemplo literario..." onkeydown="if(event.key==='Enter')searchDict()">
+        <button class="btn btn-accent" onclick="searchDict()">Buscar</button>
+      </div>
+      <div id="dict-results" class="dict-results"></div>
+    </div>
+  </div>
+
+  <!-- IA -->
+  <div id="panel-ai" class="panel">
+    <div class="topbar">
+      <h2>✨ Asistente IA</h2>
+      <div class="topbar-actions">
+        <button class="btn" onclick="clearAiHistory()">🗑️ Limpiar</button>
+      </div>
+    </div>
+    <div class="ai-panel">
+      <div class="ai-prompts" id="ai-chips">
+        <button class="ai-prompt-chip" onclick="sendAiChip('Dame ideas para el siguiente capítulo de mi historia')">💡 Ideas para capítulo</button>
+        <button class="ai-prompt-chip" onclick="sendAiChip('Ayúdame a desarrollar mejor a mi personaje principal')">🧑 Desarrollar personaje</button>
+        <button class="ai-prompt-chip" onclick="sendAiChip('Sugiéreme giros de trama inesperados')">🌀 Giros de trama</button>
+        <button class="ai-prompt-chip" onclick="sendAiChip('Cómo mejorar los diálogos en mi novela')">💬 Mejorar diálogos</button>
+        <button class="ai-prompt-chip" onclick="sendAiChip('Dame nombres interesantes para personajes')">🏷️ Nombres de personajes</button>
+        <button class="ai-prompt-chip" onclick="sendAiChip('Cómo construir un mundo fantástico creíble')">🌍 Construcción de mundo</button>
+      </div>
+      <div class="ai-history" id="ai-history">
+        <div class="ai-msg">
+          <div class="ai-avatar bot">✨</div>
+          <div class="ai-bubble">¡Hola! Soy tu asistente creativo de INKFORGE. Estoy aquí para ayudarte con tu novela, web novel o libro. Puedo ayudarte a desarrollar personajes, crear tramas, generar ideas, mejorar tu estilo narrativo y mucho más. ¿En qué estás trabajando hoy?</div>
+        </div>
+      </div>
+      <div class="ai-input-bar">
+        <textarea class="ai-input" id="ai-input" placeholder="Pregunta algo sobre tu historia..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAiMsg()}"></textarea>
+        <button class="ai-send" onclick="sendAiMsg()">➤</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CORRECTOR -->
+  <div id="panel-corrector" class="panel">
+    <div class="topbar">
+      <h2>✅ Corrector de Texto</h2>
+      <div class="topbar-actions">
+        <button class="btn btn-accent" id="correct-btn" onclick="runCorrector()">Analizar Texto</button>
+      </div>
+    </div>
+    <div class="corrector-panel">
+      <div id="corrector-zone" class="corrector-zone" contenteditable="true" spellcheck="false" placeholder="Pega o escribe el texto de tu capítulo aquí para corregirlo..."></div>
+      <div id="corrections-list" class="corrections-list" style="margin-top:20px"></div>
+    </div>
+  </div>
+
+  <!-- MÚSICA -->
+  <div id="panel-music" class="panel">
+    <div class="topbar"><h2>🎵 Reproductor de Música</h2></div>
+    <div class="music-panel">
+      <div class="music-add-bar">
+        <input type="text" id="music-url-input" placeholder="Pega un link de YouTube o Spotify...">
+        <input type="text" id="music-name-input" placeholder="Nombre (opcional)" style="max-width:200px">
+        <button class="btn btn-accent" onclick="addMusicTrack()">+ Agregar</button>
+      </div>
+      <div class="music-player" id="music-player">
+        <div class="music-player-inner">
+          <div class="album-art" id="current-art">🎵</div>
+          <div class="music-info">
+            <div class="music-title" id="current-title">Sin pista seleccionada</div>
+            <div class="music-sub" id="current-sub">Agrega una URL para comenzar</div>
+            <div class="music-controls">
+              <button class="mc-btn" onclick="prevTrack()" title="Anterior">⏮</button>
+              <button class="mc-btn play" id="play-btn" onclick="togglePlay()">▶</button>
+              <button class="mc-btn" onclick="nextTrack()" title="Siguiente">⏭</button>
+              <div class="progress-track" style="flex:1" onclick="seekTrack(event)">
+                <div class="progress-fill-m" id="progress-fill" style="width:0%"></div>
+              </div>
+              <div class="volume-wrap">
+                <span class="volume-icon">🔊</span>
+                <input type="range" class="vol-slider" min="0" max="100" value="80" id="vol-slider" oninput="setVolume(this.value)">
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="yt-container" style="margin-top:16px;display:none">
+          <button id="yt-open-btn" onclick="openYtModal()" style="width:100%;padding:14px;border-radius:12px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:.2s;font-family:var(--font-sans)">
+            <span style="font-size:20px">▶️</span> <span id="yt-btn-label">Abrir reproductor</span>
+          </button>
+          <div style="margin-top:8px;font-size:11px;color:var(--text3);text-align:center">⚠️ YouTube requiere abrirse en una ventana separada para funcionar correctamente</div>
+        </div>
+      </div>
+      <div class="playlist" id="playlist"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="char-modal-overlay" onclick="closeCharModal(event)">
+  <div class="modal">
+    <h3>Nuevo Personaje</h3>
+    <p class="modal-sub">Define los rasgos fundamentales de tu personaje</p>
+    <div class="form-group">
+      <label>Nombre</label>
+      <input type="text" id="char-name" placeholder="Nombre del personaje">
+    </div>
+    <div class="form-group">
+      <label>Rol en la Historia</label>
+      <select id="char-role">
+        <option>Protagonista</option>
+        <option>Antagonista</option>
+        <option>Secundario</option>
+        <option>Mentor</option>
+        <option>Aliado</option>
+        <option>Neutral</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Descripción</label>
+      <textarea id="char-desc" placeholder="Apariencia, personalidad, historia..." rows="3"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Relación con otro personaje</label>
+      <input type="text" id="char-relation" placeholder="ej: Hijo de Ariel, Enemigo de Kira">
+    </div>
+    <div class="form-group">
+      <label>Color del personaje</label>
+      <div class="color-row" id="char-color-row">
+        <div class="color-opt sel" style="background:#c084fc" data-color="#c084fc" onclick="selectCharColor(this)"></div>
+        <div class="color-opt" style="background:#2dd4bf" data-color="#2dd4bf" onclick="selectCharColor(this)"></div>
+        <div class="color-opt" style="background:#f59e0b" data-color="#f59e0b" onclick="selectCharColor(this)"></div>
+        <div class="color-opt" style="background:#f472b6" data-color="#f472b6" onclick="selectCharColor(this)"></div>
+        <div class="color-opt" style="background:#60a5fa" data-color="#60a5fa" onclick="selectCharColor(this)"></div>
+        <div class="color-opt" style="background:#4ade80" data-color="#4ade80" onclick="selectCharColor(this)"></div>
+        <div class="color-opt" style="background:#f87171" data-color="#f87171" onclick="selectCharColor(this)"></div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Emoji / Ícono</label>
+      <input type="text" id="char-emoji" placeholder="ej: 🗡️ 🧙 👑 🐉" maxlength="4">
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeCharModal()">Cancelar</button>
+      <button class="btn btn-accent" onclick="saveChar()">Guardar Personaje</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===================== STATE =====================
+let activePanel = 'cover';
+let covers = JSON.parse(localStorage.getItem('inkforge_covers')||'[]');
+let chars = JSON.parse(localStorage.getItem('inkforge_chars')||'[]');
+let chapters = JSON.parse(localStorage.getItem('inkforge_chapters')||'[{"id":1,"title":"Capítulo 1","content":"","bookmarks":[]}]');
+let activeChapter = 0;
+let bookmarks = [];
+let playlist = JSON.parse(localStorage.getItem('inkforge_playlist')||'[]');
+let aiHistory = JSON.parse(localStorage.getItem('inkforge_ai_history')||'[]');
+let selectedCharColor = '#c084fc';
+let currentTrack = -1;
+let isPlaying = false;
+let progressInterval = null;
+
+// ===================== NAV =====================
+function showPanel(id) {
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('panel-'+id).classList.add('active');
+  event.currentTarget && event.currentTarget.classList.add('active');
+  activePanel = id;
+  if(id==='chars') renderChars();
+  if(id==='tree') renderTree();
+  if(id==='narrator') renderNarrator();
+  if(id==='editor') renderChapters();
+  if(id==='music') renderPlaylist();
+  if(id==='ai') renderAiHistory();
+}
+
+// ===================== COVERS =====================
+function handleCoverUpload(e) {
+  const files = Array.from(e.target.files);
+  files.forEach(f=>{
+    const r = new FileReader();
+    r.onload = ev=>{
+      covers.push({id:Date.now()+Math.random(),name:f.name,src:ev.target.result});
+      localStorage.setItem('inkforge_covers',JSON.stringify(covers));
+      renderCovers();
+    };
+    r.readAsDataURL(f);
+  });
+}
+function renderCovers() {
+  const grid = document.getElementById('cover-grid');
+  const empty = document.getElementById('cover-empty');
+  if(!covers.length){grid.style.display='none';empty.style.display='block';return}
+  empty.style.display='none';
+  grid.style.display='grid';
+  grid.innerHTML=covers.map((c,i)=>`
+    <div class="cover-card">
+      <img src="${c.src}" alt="${c.name}">
+      <div class="cover-label">${c.name}</div>
+      <div class="cover-actions">
+        <button class="btn" onclick="deleteCover(${i})">🗑️ Eliminar</button>
+      </div>
+    </div>`).join('');
+}
+function deleteCover(i){covers.splice(i,1);localStorage.setItem('inkforge_covers',JSON.stringify(covers));renderCovers()}
+renderCovers();
+
+// ===================== CHARACTERS =====================
+let selectedCharColor2 = '#c084fc';
+function selectCharColor(el){
+  document.querySelectorAll('.color-opt').forEach(e=>e.classList.remove('sel'));
+  el.classList.add('sel');
+  selectedCharColor = el.dataset.color;
+}
+function openCharModal(){document.getElementById('char-modal-overlay').classList.add('open')}
+function closeCharModal(e){
+  if(!e||e.target===document.getElementById('char-modal-overlay')){
+    document.getElementById('char-modal-overlay').classList.remove('open');
+    ['char-name','char-desc','char-relation','char-emoji'].forEach(id=>document.getElementById(id).value='');
+  }
+}
+function saveChar(){
+  const name=document.getElementById('char-name').value.trim();
+  if(!name)return alert('Ingresa un nombre');
+  chars.push({
+    id:Date.now(),name,
+    role:document.getElementById('char-role').value,
+    desc:document.getElementById('char-desc').value,
+    relation:document.getElementById('char-relation').value,
+    color:selectedCharColor,
+    emoji:document.getElementById('char-emoji').value||'👤'
+  });
+  localStorage.setItem('inkforge_chars',JSON.stringify(chars));
+  closeCharModal();renderChars();
+  if(activePanel==='tree')renderTree();
+}
+function renderChars(){
+  const c=document.getElementById('chars-container');
+  if(!chars.length){
+    c.innerHTML=`<div class="empty-state"><div class="icon">🧑‍🤝‍🧑</div><h3>Construye tu elenco</h3><p>Agrega personajes con su historia, rol y rasgos únicos</p></div>`;
+    return;
+  }
+  const roleColors={'Protagonista':'tag-purple','Antagonista':'tag-rose','Secundario':'tag-teal','Mentor':'tag-gold','Aliado':'tag-blue','Neutral':''};
+  c.innerHTML=`<div class="chars-grid">${chars.map((ch,i)=>`
+    <div class="char-card">
+      <div class="char-avatar" style="background:${ch.color}22;border:2px solid ${ch.color}33;font-size:28px">${ch.emoji}</div>
+      <div class="char-name">${ch.name}</div>
+      <div class="char-role">${ch.role}</div>
+      ${ch.desc?`<p style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">${ch.desc.slice(0,100)}${ch.desc.length>100?'...':''}</p>`:''}
+      ${ch.relation?`<div class="char-tag" style="color:${ch.color};border-color:${ch.color}44;background:${ch.color}11">🔗 ${ch.relation}</div>`:''}
+      <button class="btn" style="margin-top:10px;width:100%;font-size:12px;padding:5px" onclick="deleteChar(${i})">🗑️ Eliminar</button>
+    </div>`).join('')}</div>`;
+}
+function deleteChar(i){chars.splice(i,1);localStorage.setItem('inkforge_chars',JSON.stringify(chars));renderChars();if(activePanel==='tree')renderTree()}
+
+// ===================== TREE =====================
+function renderTree(){
+  const empty=document.getElementById('tree-empty');
+  const canvas=document.getElementById('treeCanvas');
+  if(!chars.length){empty.style.display='flex';canvas.style.display='none';return}
+  empty.style.display='none';canvas.style.display='block';
+  const container=document.getElementById('tree-container');
+  const W=container.offsetWidth||800,H=Math.max(500,chars.length*100);
+  canvas.width=W;canvas.height=H;
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,W,H);
+  const cols=Math.ceil(Math.sqrt(chars.length));
+  const cw=W/cols,ch=H/Math.ceil(chars.length/cols);
+  chars.forEach((char,i)=>{
+    const col=i%cols,row=Math.floor(i/cols);
+    const cx=col*cw+cw/2,cy=row*ch+ch/2;
+    char._x=cx;char._y=cy;
+    // Draw node
+    ctx.beginPath();ctx.arc(cx,cy,36,0,Math.PI*2);
+    ctx.fillStyle=char.color+'33';ctx.fill();
+    ctx.strokeStyle=char.color;ctx.lineWidth=2;ctx.stroke();
+    // Emoji
+    ctx.font='24px serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(char.emoji,cx,cy-4);
+    // Name
+    ctx.font='12px DM Sans,sans-serif';ctx.fillStyle='#e8e8f0';
+    ctx.fillText(char.name,cx,cy+26);
+    // Role
+    ctx.font='10px DM Sans,sans-serif';ctx.fillStyle='#9999b8';
+    ctx.fillText(char.role,cx,cy+40);
+  });
+  // Draw relations
+  ctx.lineWidth=1.5;ctx.setLineDash([4,4]);
+  chars.forEach(char=>{
+    if(char.relation){
+      const relName=char.relation.toLowerCase();
+      const target=chars.find(c=>relName.includes(c.name.toLowerCase()));
+      if(target&&target._x){
+        ctx.beginPath();ctx.moveTo(char._x,char._y);ctx.lineTo(target._x,target._y);
+        ctx.strokeStyle=char.color+'88';ctx.stroke();
+        const mx=(char._x+target._x)/2,my=(char._y+target._y)/2;
+        ctx.setLineDash([]);ctx.font='10px DM Sans,sans-serif';ctx.fillStyle='#9999b8';
+        const label=char.relation.split(' ')[0];
+        ctx.fillText(label,mx,my-8);ctx.setLineDash([4,4]);
+      }
+    }
+  });
+}
+
+// ===================== NARRATOR =====================
+const narratorData=[
+  {type:'Persona',title:'Primera Persona',emoji:'👁️',desc:'El narrador es el protagonista, habla en primera persona (Yo). Crea una conexión íntima con el lector, pero limita la perspectiva a lo que el protagonista sabe.',example:'"Recuerdo el día que todo cambió. Yo no lo sabía entonces, pero aquel instante definiría mi destino."',pros:['Inmersión emocional profunda','Voz auténtica y personal','Ideal para diarios, memorias'],cons:['Visión limitada al protagonista','Difícil mostrar escenas sin el narrador']},
+  {type:'Persona',title:'Segunda Persona',emoji:'👆',desc:'Usa "tú" para dirigirse al lector como protagonista. Muy poco común, genera una experiencia inmersiva e inusual.',example:'"Cruzas la puerta y el frío te golpea. Sabes que no deberías estar aquí, pero tus piernas no se detienen."',pros:['Experiencia única e inmersiva','Impacto emocional directo'],cons:['Puede sentirse forzado','Difícil de sostener en textos largos']},
+  {type:'Persona',title:'Tercera Persona Limitada',emoji:'🔭',desc:'El narrador usa "él/ella" y accede al interior de un solo personaje. El más popular en la ficción moderna.',example:'"Elena observó la multitud. ¿Estaría él allí? Su corazón latía con urgencia que ella misma no entendía."',pros:['Balance entre distancia e intimidad','Flexibilidad narrativa','Estándar en novelas contemporáneas'],cons:['Requiere consistencia de perspectiva']},
+  {type:'Persona',title:'Tercera Persona Omnisciente',emoji:'🌌',desc:'El narrador lo sabe todo: pensamientos de todos los personajes, eventos en cualquier lugar. Propio de la narrativa clásica.',example:'"Mientras Ariel planeaba su venganza en el norte, Kira ignoraba el peligro que se acercaba desde el sur."',pros:['Visión panorámica','Ideal para epicas y sagas','Múltiples tramas simultáneas'],cons:['Puede perder profundidad emocional','Riesgo de "cabeza de pogo" (saltar entre POVs)']},
+  {type:'Estilo',title:'Narrador No Confiable',emoji:'🎭',desc:'El narrador miente, omite o distorsiona la realidad. Crea suspenso y sorpresas al revelar la verdad gradualmente.',example:'"Yo sólo quería ayudar. Todo lo que hice fue por el bien de todos... ¿o no?"',pros:['Giros de trama poderosos','Profundidad psicológica'],cons:['Requiere planificación cuidadosa','Puede confundir al lector si se abusa']},
+  {type:'Estilo',title:'Narrador Epistolar',emoji:'✉️',desc:'La historia se cuenta a través de cartas, diarios, emails, mensajes. Clásico del romanticismo, revive en la era digital.',example:'"Querido diario: Han pasado tres días desde que encontré el mapa. No he dormido."',pros:['Formato inmersivo','Voces múltiples posibles','Sensación de autenticidad'],cons:['Difícil mantener la tensión','Limitado a lo que el personaje escribiría']},
+  {type:'Estilo',title:'Stream of Consciousness',emoji:'🌊',desc:'Flujo de conciencia: reproduce directamente el pensamiento caótico del personaje sin filtros. Técnica modernista.',example:'"El tren—no, el tren no—debí llamar a mamá—el informe—¿cuándo fue eso—quince años atrás ya—"',pros:['Máxima profundidad psicológica','Voz única e irrepetible'],cons:['Difícil de leer','Requiere habilidad técnica alta']}
+];
+function renderNarrator(){
+  document.getElementById('narr-grid').innerHTML=narratorData.map(n=>`
+    <div class="narr-card">
+      <div class="narr-type">${n.emoji} ${n.type}</div>
+      <div class="narr-title">${n.title}</div>
+      <div class="narr-desc">${n.desc}</div>
+      <div class="narr-examples">${n.example}</div>
+      <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:4px">
+        ${n.pros.map(p=>`<span class="tag tag-teal">✓ ${p}</span>`).join('')}
+        ${n.cons.map(c=>`<span class="tag tag-rose">✕ ${c}</span>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+// ===================== EDITOR =====================
+function renderChapters(){
+  const ul=document.getElementById('chapters-ul');
+  ul.innerHTML=chapters.map((ch,i)=>`
+    <div class="chapter-item ${i===activeChapter?'active':''}" onclick="selectChapter(${i})">
+      <div class="chapter-mark" style="background:${i===activeChapter?'var(--accent)':'var(--border2)'}"></div>
+      <div style="flex:1">
+        <div>${ch.title}</div>
+        <div class="progress-bar" style="margin-top:4px"><div class="progress-fill" style="width:${Math.min(100,ch.content.length/10)}%"></div></div>
+      </div>
+    </div>`).join('');
+  loadChapter(activeChapter);
+}
+function selectChapter(i){
+  saveCurrentChapterContent();
+  activeChapter=i;renderChapters();
+}
+function loadChapter(i){
+  const ed=document.getElementById('editor-area');
+  ed.innerHTML=chapters[i]?chapters[i].content:'';
+  updateWordCount();
+  renderBookmarks();
+}
+function saveCurrentChapterContent(){
+  const ed=document.getElementById('editor-area');
+  if(chapters[activeChapter])chapters[activeChapter].content=ed.innerHTML;
+  localStorage.setItem('inkforge_chapters',JSON.stringify(chapters));
+}
+function saveChapter(){saveCurrentChapterContent();renderChapters();showToast('💾 Capítulo guardado')}
+function addChapter(){
+  chapters.push({id:Date.now(),title:`Capítulo ${chapters.length+1}`,content:'',bookmarks:[]});
+  localStorage.setItem('inkforge_chapters',JSON.stringify(chapters));
+  selectChapter(chapters.length-1);
+}
+function fmt(cmd){document.execCommand(cmd,false,null)}
+function highlight(cls){
+  const sel=window.getSelection();
+  if(!sel.rangeCount||sel.toString()==='')return;
+  const range=sel.getRangeAt(0);
+  const span=document.createElement('span');
+  span.className=cls;
+  range.surroundContents(span);
+}
+function updateWordCount(){
+  const text=document.getElementById('editor-area').innerText||'';
+  const words=text.trim().split(/\s+/).filter(w=>w).length;
+  const chars=text.length;
+  document.getElementById('word-count').textContent=`${words} palabras`;
+  document.getElementById('char-count').textContent=`${chars} caracteres`;
+  document.getElementById('reading-time').textContent=`~${Math.ceil(words/200)} min lectura`;
+}
+function changeFont(v){document.getElementById('editor-area').style.fontFamily=v}
+function changeSize(v){document.getElementById('editor-area').style.fontSize=v+'px'}
+function changeBg(v){
+  document.getElementById('editor-area-wrap').style.background=v;
+  document.getElementById('editor-area').style.background='transparent';
+}
+function changeTextColor(v){document.getElementById('editor-area').style.color=v}
+function editorKeydown(e){
+  if(e.key==='Tab'){e.preventDefault();document.execCommand('insertText',false,'    ')}
+}
+function addBookmark(){
+  const ed=document.getElementById('editor-area');
+  const text=window.getSelection().toString()||'Marcador';
+  const bm={id:Date.now(),text:text.slice(0,30),color:['var(--gold)','var(--accent)','var(--teal)','var(--rose)'][Math.floor(Math.random()*4)]};
+  bookmarks.push(bm);renderBookmarks();
+}
+function renderBookmarks(){
+  const list=document.getElementById('bookmark-list');
+  list.innerHTML=bookmarks.map((b,i)=>`
+    <div class="bookmark-item" onclick="removeBookmark(${i})" title="Clic para eliminar">
+      <div class="bookmark-dot" style="background:${b.color}"></div>
+      <span style="font-size:12px">${b.text}</span>
+    </div>`).join('');
+}
+function removeBookmark(i){bookmarks.splice(i,1);renderBookmarks()}
+function sendToCorrector(){
+  const text=document.getElementById('editor-area').innerText;
+  showPanel('corrector');
+  document.getElementById('corrector-zone').innerText=text;
+  setTimeout(runCorrector,300);
+}
+renderChapters();
+
+// ===================== DICTIONARY (Claude API) =====================
+async function searchDict(){
+  const q = document.getElementById('dict-input').value.trim();
+  const res = document.getElementById('dict-results');
+  if(!q){ res.innerHTML=''; return; }
+
+  res.innerHTML=`<div class="loading"><div class="loading-dot"></div><div class="loading-dot"></div><div class="loading-dot"></div><span style="margin-left:8px">Consultando diccionario...</span></div>`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: 'Eres un diccionario literario experto en español. Devuelve ÚNICAMENTE un objeto JSON válido, sin backticks ni texto extra.',
+        messages: [{
+          role: 'user',
+          content: `Para la palabra "${q}" devuelve este JSON exacto:
+{"word":"${q}","type":"categoría gramatical","def":"definición clara en 1-2 oraciones","syns":["sin1","sin2","sin3","sin4","sin5","sin6","sin7","sin8","sin9","sin10"],"antonyms":["ant1","ant2","ant3"],"example":"Oración literaria de ejemplo","origin":"Breve etimología"}
+Sinónimos variados: formales, literarios, coloquiales y técnicos. Prioriza la acepción más usada en literatura.`
+        }]
+      })
+    });
+
+    const data = await resp.json();
+    const raw = data.content?.[0]?.text || '{}';
+    const clean = raw.replace(/```json|```/g,'').trim();
+    let d;
+    try { d = JSON.parse(clean); } catch(e) { throw new Error('Respuesta inválida del servidor'); }
+    if(!d.word) throw new Error('Sin resultado para esta palabra');
+
+    res.innerHTML=`
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:24px">
+        <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:4px">
+          <div class="dict-word">${d.word}</div>
+          ${d.origin ? `<div style="font-size:11px;color:var(--text3);font-style:italic">${d.origin}</div>` : ''}
+        </div>
+        <div class="dict-type">${d.type}</div>
+        <div class="dict-def">${d.def}</div>
+        ${d.example ? `<div style="margin:12px 0;padding:12px;background:var(--bg4);border-radius:8px;font-size:13px;color:var(--text3);font-style:italic;border-left:2px solid var(--accent)">"${d.example}"</div>` : ''}
+        <div style="font-size:12px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px">Sinónimos <span style="color:var(--text3);font-size:10px">(clic para copiar)</span></div>
+        <div class="syns-grid">${(d.syns||[]).map(s=>`<div class="syn-tag" onclick="copySynAndSearch('${s.replace(/'/g,"\\'")}','${q.replace(/'/g,"\\'")}' )" title="Copiar">${s}</div>`).join('')}</div>
+        ${d.antonyms?.length ? `
+        <div style="font-size:12px;color:var(--text3);margin:14px 0 8px;text-transform:uppercase;letter-spacing:1px">Antónimos</div>
+        <div class="syns-grid">${d.antonyms.map(a=>`<div class="syn-tag" style="border-color:rgba(248,113,113,.25);color:var(--red)" onclick="copySynAndSearch('${a.replace(/'/g,"\\'")}','${q.replace(/'/g,"\\'")}' )">${a}</div>`).join('')}</div>` : ''}
+        <div style="margin-top:12px;font-size:11px;color:var(--text3)">⚡ Powered by Claude AI</div>
+      </div>`;
+  } catch(e) {
+    res.innerHTML=`<div style="background:var(--bg3);border:1px solid rgba(248,113,113,.2);border-radius:14px;padding:24px;text-align:center">
+      <div style="font-size:36px;margin-bottom:12px">⚠️</div>
+      <div style="color:var(--red);margin-bottom:8px">Error al buscar "${q}"</div>
+      <div style="font-size:12px;color:var(--text3)">${e.message}</div>
+    </div>`;
+  }
+}
+
+function copySynAndSearch(s, original){
+  navigator.clipboard.writeText(s).catch(()=>{});
+  showToast('📋 "'+s+'" copiado');
+}
+
+// ===================== AI ASSISTANT =====================
+function renderAiHistory(){
+  const hist=document.getElementById('ai-history');
+  if(aiHistory.length){
+    const msgs=aiHistory.map(m=>`
+      <div class="ai-msg ${m.role}">
+        <div class="ai-avatar ${m.role==='user'?'user':'bot'}">${m.role==='user'?'✍️':'✨'}</div>
+        <div class="ai-bubble">${m.content.replace(/\n/g,'<br>')}</div>
+      </div>`).join('');
+    hist.innerHTML=`<div class="ai-msg"><div class="ai-avatar bot">✨</div><div class="ai-bubble">¡Hola! Soy tu asistente creativo de INKFORGE. ¿En qué estamos trabajando hoy?</div></div>${msgs}`;
+  }
+  hist.scrollTop=hist.scrollHeight;
+}
+function sendAiChip(text){
+  document.getElementById('ai-input').value=text;
+  sendAiMsg();
+}
+async function sendAiMsg(){
+  const input=document.getElementById('ai-input');
+  const text=input.value.trim();
+  if(!text)return;
+  input.value='';
+  aiHistory.push({role:'user',content:text});
+  const hist=document.getElementById('ai-history');
+  hist.innerHTML+=`<div class="ai-msg user"><div class="ai-avatar user">✍️</div><div class="ai-bubble">${text.replace(/\n/g,'<br>')}</div></div>`;
+  const typingEl=document.createElement('div');
+  typingEl.className='ai-msg';
+  typingEl.innerHTML=`<div class="ai-avatar bot">✨</div><div class="ai-bubble"><div class="ai-typing"><span></span><span></span><span></span></div></div>`;
+  hist.appendChild(typingEl);
+  hist.scrollTop=hist.scrollHeight;
+  try{
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:1000,
+        system:`Eres un asistente creativo experto en escritura de novelas, web novels y libros. Ayudas al escritor con ideas, desarrollo de personajes, construcción de mundos, tramas, estilos narrativos, diálogos y más. Responde siempre en español, con entusiasmo creativo y sugerencias concretas y útiles. Cuando des listas o ideas, hazlas variadas e interesantes.`,
+        messages:aiHistory.map(m=>({role:m.role,content:m.content}))
+      })
+    });
+    const data=await resp.json();
+    const reply=data.content?.[0]?.text||'Lo siento, no pude generar una respuesta.';
+    aiHistory.push({role:'assistant',content:reply});
+    localStorage.setItem('inkforge_ai_history',JSON.stringify(aiHistory.slice(-40)));
+    typingEl.remove();
+    hist.innerHTML+=`<div class="ai-msg"><div class="ai-avatar bot">✨</div><div class="ai-bubble">${reply.replace(/\n/g,'<br>')}</div></div>`;
+  }catch(e){
+    typingEl.remove();
+    const err='Error al conectar con el asistente. Por favor intenta de nuevo.';
+    hist.innerHTML+=`<div class="ai-msg"><div class="ai-avatar bot">✨</div><div class="ai-bubble" style="color:var(--red)">${err}</div></div>`;
+  }
+  hist.scrollTop=hist.scrollHeight;
+}
+function clearAiHistory(){aiHistory=[];localStorage.removeItem('inkforge_ai_history');renderAiHistory()}
+
+// ===================== CORRECTOR =====================
+async function runCorrector(){
+  const zone=document.getElementById('corrector-zone');
+  const text=zone.innerText.trim();
+  if(!text){alert('Ingresa texto para corregir');return}
+  const btn=document.getElementById('correct-btn');
+  btn.textContent='Analizando...';btn.disabled=true;
+  const list=document.getElementById('corrections-list');
+  list.innerHTML=`<div class="loading"><div class="loading-dot"></div><div class="loading-dot"></div><div class="loading-dot"></div><span style="margin-left:8px">Analizando tu texto...</span></div>`;
+  try{
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:1000,
+        system:'Eres un corrector literario profesional. Analiza el texto y devuelve SOLO un JSON con esta estructura exacta: {"corrections":[{"type":"error|style|improve","original":"...","suggestion":"...","explanation":"..."}]} máximo 10 correcciones. type: error=error gramatical/ortográfico, style=problema de estilo, improve=sugerencia de mejora. Sin texto adicional, solo el JSON.',
+        messages:[{role:'user',content:`Corrige este texto:\n\n${text.slice(0,2000)}`}]
+      })
+    });
+    const data=await resp.json();
+    const raw=data.content?.[0]?.text||'{}';
+    const clean=raw.replace(/```json|```/g,'').trim();
+    const parsed=JSON.parse(clean);
+    const cors=parsed.corrections||[];
+    if(!cors.length){
+      list.innerHTML=`<div style="background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.3);border-radius:12px;padding:20px;text-align:center;color:var(--green)">✅ ¡Excelente! No se encontraron errores significativos.</div>`;
+    } else {
+      list.innerHTML=cors.map(c=>{
+        const icon=c.type==='error'?{cls:'err',i:'❌'}:c.type==='style'?{cls:'warn',i:'⚠️'}:{cls:'tip',i:'💡'};
+        return `<div class="correction-item">
+          <div class="cor-icon ${icon.cls}">${icon.i}</div>
+          <div>
+            <div class="cor-text"><b style="color:var(--text)">"${c.original}"</b> — ${c.explanation}</div>
+            <div class="cor-fix">→ ${c.suggestion}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }catch(e){
+    list.innerHTML=`<div style="color:var(--red);padding:20px">Error al conectar con el corrector. Verifica tu conexión.</div>`;
+  }
+  btn.textContent='Analizar Texto';btn.disabled=false;
+}
+
+// ===================== MUSIC =====================
+function getYTId(url){const m=url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/);return m?m[1]:null}
+function getSpotifyId(url){const m=url.match(/spotify\.com\/(track|album|playlist)\/([^?]+)/);return m?{type:m[1],id:m[2]}:null}
+function addMusicTrack(){
+  const urlInput=document.getElementById('music-url-input');
+  const nameInput=document.getElementById('music-name-input');
+  const url=urlInput.value.trim();
+  if(!url)return;
+  const ytId=getYTId(url);
+  const spData=getSpotifyId(url);
+  let track={id:Date.now(),url,name:nameInput.value.trim()||url,type:'link'};
+  if(ytId){track.type='youtube';track.ytId=ytId;track.name=nameInput.value.trim()||'YouTube — '+ytId;track.thumb=`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`}
+  else if(spData){track.type='spotify';track.spType=spData.type;track.spId=spData.id;track.name=nameInput.value.trim()||'Spotify — '+spData.type}
+  playlist.push(track);
+  localStorage.setItem('inkforge_playlist',JSON.stringify(playlist));
+  urlInput.value='';nameInput.value='';
+  renderPlaylist();
+  if(playlist.length===1)playTrack(0);
+}
+function renderPlaylist(){
+  const pl=document.getElementById('playlist');
+  if(!playlist.length){pl.innerHTML=`<div class="empty-state"><div class="icon">🎶</div><h3>Playlist vacía</h3><p>Agrega links de YouTube o Spotify</p></div>`;return}
+  pl.innerHTML=playlist.map((t,i)=>`
+    <div class="playlist-item ${i===currentTrack?'active':''}" onclick="playTrack(${i})">
+      <div class="pl-num">${i===currentTrack?'▶':''}${i+1}</div>
+      <div class="pl-thumb">${t.thumb?`<img src="${t.thumb}" onerror="this.style.display='none';this.parentNode.textContent='🎵'">`:t.type==='youtube'?'▶️':t.type==='spotify'?'🎵':'🔗'}</div>
+      <div class="pl-info">
+        <div class="pl-title">${t.name}</div>
+        <div class="pl-type">${t.type==='youtube'?'YouTube':t.type==='spotify'?'Spotify':'Link'}</div>
+      </div>
+      <button class="pl-del" onclick="event.stopPropagation();removeTrack(${i})">🗑</button>
+    </div>`).join('');
+}
+let currentYtUrl = '';
+let currentYtId = '';
+
+function openYtModal(){
+  if(!currentYtUrl) return;
+  const modal = document.getElementById('yt-modal');
+  const frame = document.getElementById('yt-modal-frame');
+  const link = document.getElementById('yt-open-link');
+  const title = document.getElementById('yt-modal-title');
+  const t = playlist[currentTrack];
+  if(!t) return;
+  title.textContent = '🎵 ' + t.name;
+  if(t.type==='youtube'){
+    frame.src = `https://www.youtube.com/embed/${t.ytId}?autoplay=1&controls=1`;
+    link.href = `https://www.youtube.com/watch?v=${t.ytId}`;
+  } else if(t.type==='spotify'){
+    frame.src = `https://open.spotify.com/embed/${t.spType}/${t.spId}`;
+    link.href = t.url;
+  }
+  modal.classList.add('open');
+}
+function closeYtModal(){
+  document.getElementById('yt-modal').classList.remove('open');
+  document.getElementById('yt-modal-frame').src='';
+}
+function playTrack(i){
+  currentTrack=i;
+  const t=playlist[i];
+  document.getElementById('current-title').textContent=t.name;
+  document.getElementById('current-sub').textContent=t.type==='youtube'?'YouTube':t.type==='spotify'?'Spotify':'Enlace de música';
+  const art=document.getElementById('current-art');
+  if(t.thumb)art.innerHTML=`<img src="${t.thumb}" style="width:100%;height:100%;object-fit:cover">`;
+  else art.innerHTML='🎵';
+  const ytContainer=document.getElementById('yt-container');
+  if(t.type==='youtube'||t.type==='spotify'){
+    currentYtUrl = t.url;
+    ytContainer.style.display='block';
+    document.getElementById('yt-btn-label').textContent = t.type==='youtube' ? `▶ Reproducir en YouTube: ${t.name}` : `▶ Abrir en Spotify: ${t.name}`;
+    document.getElementById('play-btn').textContent='⏸';
+    isPlaying=true;
+    // Auto-open modal
+    openYtModal();
+  } else {
+    ytContainer.style.display='none';
+    window.open(t.url,'_blank');
+  }
+  renderPlaylist();
+  startProgress();
+}
+function togglePlay(){
+  if(currentTrack<0){if(playlist.length)playTrack(0);return}
+  isPlaying=!isPlaying;
+  document.getElementById('play-btn').textContent=isPlaying?'⏸':'▶';
+  if(isPlaying)startProgress();else clearInterval(progressInterval);
+}
+function nextTrack(){if(currentTrack<playlist.length-1)playTrack(currentTrack+1)}
+function prevTrack(){if(currentTrack>0)playTrack(currentTrack-1)}
+function removeTrack(i){
+  playlist.splice(i,1);
+  if(currentTrack>=i){currentTrack--;if(currentTrack<0){currentTrack=-1;closeYtModal();document.getElementById('yt-container').style.display='none'}}
+  localStorage.setItem('inkforge_playlist',JSON.stringify(playlist));renderPlaylist();
+}
+function setVolume(v){document.getElementById('yt-modal-frame').contentWindow?.postMessage({event:'command',func:'setVolume',args:[v]},'*')}
+function seekTrack(e){
+  const track=e.currentTarget;
+  const pct=e.offsetX/track.offsetWidth;
+  document.getElementById('progress-fill').style.width=(pct*100)+'%';
+}
+let fakeProgress=0;
+function startProgress(){
+  clearInterval(progressInterval);fakeProgress=0;
+  progressInterval=setInterval(()=>{
+    if(!isPlaying)return;
+    fakeProgress=Math.min(100,fakeProgress+0.05);
+    document.getElementById('progress-fill').style.width=fakeProgress+'%';
+    if(fakeProgress>=100){clearInterval(progressInterval);nextTrack()}
+  },1000);
+}
+
+// ===================== UTILS =====================
+function showToast(msg){
+  const t=document.createElement('div');
+  t.style.cssText='position:fixed;bottom:24px;right:24px;background:var(--bg3);border:1px solid var(--accent);color:var(--text);padding:10px 18px;border-radius:10px;font-size:13px;z-index:9999;animation:fadeIn .2s;';
+  t.textContent=msg;document.body.appendChild(t);
+  setTimeout(()=>t.remove(),2500);
+}
+window.showToast = showToast;
+
+// ===================== INIT =====================
+renderCovers();
+renderChapters();
+// Restore AI
+if(aiHistory.length)renderAiHistory();
+</script>
+</div><!-- end #app-root -->
+</body>
+</html>
