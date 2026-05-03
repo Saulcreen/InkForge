@@ -646,7 +646,10 @@ iframe.yt-embed{display:none}
       </div>
     </div>
     <iframe id="yt-modal-frame" allow="autoplay; encrypted-media" allowfullscreen></iframe>
-    <div class="yt-warning">⚠️ Si el video no carga, <a id="yt-open-link" href="#" target="_blank" style="color:var(--gold);text-decoration:underline">ábrelo en YouTube</a></div>
+    <div class="yt-warning" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <span>⚠️ <a id="yt-open-link" href="#" target="_blank" style="color:var(--gold);text-decoration:underline">Abrir en YouTube</a></span>
+      <button onclick="switchPipedServer()" style="font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid rgba(245,158,11,.4);background:transparent;color:var(--gold);cursor:pointer">🔄 Cambiar servidor</button>
+    </div>
   </div>
 </div>
 
@@ -1446,6 +1449,23 @@ function renderPlaylist(){
 let currentYtUrl = '';
 let currentYtId = '';
 
+// Servidores Piped (sin anuncios) — se prueban en orden
+const PIPED_SERVERS = [
+  'https://piped.video',
+  'https://piped.kavin.rocks',
+  'https://piped.privacydev.net',
+];
+let pipedIndex = 0;
+
+function getEmbedSrc(t){
+  if(t.type === 'spotify') return `https://open.spotify.com/embed/${t.spType}/${t.spId}`;
+  if(t.type === 'youtube'){
+    const server = PIPED_SERVERS[pipedIndex] || PIPED_SERVERS[0];
+    return `${server}/embed/${t.ytId}?autoplay=1`;
+  }
+  return '';
+}
+
 function openYtModal(){
   const modal = document.getElementById('yt-modal');
   const frame = document.getElementById('yt-modal-frame');
@@ -1454,17 +1474,29 @@ function openYtModal(){
   const t = playlist[currentTrack];
   if(!t) return;
   title.textContent = '🎵 ' + t.name;
-  // Only reload iframe if track changed (prevents interrupting music on panel switch)
-  const newSrc = t.type==='youtube'
-    ? `https://www.youtube.com/embed/${t.ytId}?autoplay=1&controls=1`
-    : t.type==='spotify'
-    ? `https://open.spotify.com/embed/${t.spType}/${t.spId}`
-    : '';
-  if(newSrc && frame.src !== newSrc) frame.src = newSrc;
+  const newSrc = getEmbedSrc(t);
+  if(newSrc && frame.src !== newSrc) {
+    frame.src = newSrc;
+    // Si falla Piped, intentar siguiente servidor y luego YouTube normal
+    frame.onerror = () => tryNextServer(t);
+  }
   if(t.type==='youtube') link.href = `https://www.youtube.com/watch?v=${t.ytId}`;
   else link.href = t.url;
   modal.classList.add('open');
   modal.classList.remove('minimized');
+}
+
+function tryNextServer(t){
+  pipedIndex++;
+  const frame = document.getElementById('yt-modal-frame');
+  if(pipedIndex < PIPED_SERVERS.length){
+    frame.src = `${PIPED_SERVERS[pipedIndex]}/embed/${t.ytId}?autoplay=1`;
+  } else {
+    // Fallback final: YouTube normal
+    pipedIndex = 0;
+    frame.src = `https://www.youtube.com/embed/${t.ytId}?autoplay=1&controls=1`;
+    showToast('⚠️ Usando YouTube (puede tener anuncios)');
+  }
 }
 function closeYtModal(){
   // Stop music completely
@@ -1473,6 +1505,19 @@ function closeYtModal(){
   isPlaying=false;
   clearInterval(progressInterval);
   document.getElementById('play-btn').textContent='▶';
+}
+function switchPipedServer(){
+  const t = playlist[currentTrack];
+  if(!t || t.type !== 'youtube') return;
+  pipedIndex = (pipedIndex + 1) % (PIPED_SERVERS.length + 1);
+  const frame = document.getElementById('yt-modal-frame');
+  if(pipedIndex < PIPED_SERVERS.length){
+    frame.src = `${PIPED_SERVERS[pipedIndex]}/embed/${t.ytId}?autoplay=1`;
+    showToast(`🔄 Servidor: ${PIPED_SERVERS[pipedIndex].replace('https://','')}`);
+  } else {
+    frame.src = `https://www.youtube.com/embed/${t.ytId}?autoplay=1&controls=1`;
+    showToast('📺 Usando YouTube normal');
+  }
 }
 function toggleMinimizePlayer(){
   const modal = document.getElementById('yt-modal');
