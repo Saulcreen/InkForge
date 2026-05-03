@@ -395,16 +395,21 @@ iframe.yt-embed{display:none}
 #sync-btn:hover{background:rgba(45,212,191,.18)}
 .auth-area{display:flex;gap:8px;align-items:center;padding:12px 10px;border-top:1px solid var(--border);margin-top:auto}
 
-/* YOUTUBE MODAL */
-#yt-modal{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2000;display:none;align-items:center;justify-content:center;backdrop-filter:blur(8px)}
+/* FLOATING MINI PLAYER */
+#yt-modal{position:fixed;bottom:24px;right:24px;z-index:2000;display:none;flex-direction:column;width:320px;background:var(--bg2);border:1px solid var(--border2);border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,.6);overflow:hidden}
 #yt-modal.open{display:flex}
-#yt-modal-inner{background:var(--bg2);border:1px solid var(--border2);border-radius:20px;padding:20px;width:90%;max-width:700px}
-#yt-modal-inner iframe{width:100%;aspect-ratio:16/9;border-radius:12px;border:none}
-.yt-modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
-.yt-modal-title{font-family:var(--font-serif);font-size:16px;color:var(--text)}
-.yt-modal-close{width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center}
+#yt-modal.minimized iframe{height:0;aspect-ratio:unset}
+#yt-modal.minimized .yt-warning{display:none}
+#yt-modal-inner{width:100%}
+#yt-modal-inner iframe{width:100%;aspect-ratio:16/9;border:none;display:block}
+.yt-modal-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg3);border-bottom:1px solid var(--border)}
+.yt-modal-title{font-size:12px;color:var(--text);font-family:var(--font-sans);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;margin-right:8px}
+.yt-modal-actions{display:flex;gap:4px;flex-shrink:0}
+.yt-modal-close{width:26px;height:26px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:.15s}
 .yt-modal-close:hover{border-color:var(--red);color:var(--red)}
-.yt-warning{margin-top:12px;padding:10px 14px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:8px;font-size:12px;color:var(--gold);display:flex;gap:8px;align-items:center}
+.yt-modal-min{width:26px;height:26px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:.15s}
+.yt-modal-min:hover{border-color:var(--accent);color:var(--accent)}
+.yt-warning{padding:8px 14px;background:rgba(245,158,11,.08);border-top:1px solid rgba(245,158,11,.2);font-size:11px;color:var(--gold);display:flex;gap:6px;align-items:center}
 
 /* HIGHLIGHT COLORS */
 .hl-yellow{background:rgba(245,158,11,.25);border-radius:3px}
@@ -630,15 +635,18 @@ iframe.yt-embed{display:none}
   </div>
 </div>
 
-<!-- YOUTUBE MODAL -->
+<!-- FLOATING MINI PLAYER -->
 <div id="yt-modal">
   <div id="yt-modal-inner">
     <div class="yt-modal-head">
       <div class="yt-modal-title" id="yt-modal-title">🎵 Reproduciendo</div>
-      <button class="yt-modal-close" onclick="closeYtModal()">✕</button>
+      <div class="yt-modal-actions">
+        <button class="yt-modal-min" onclick="toggleMinimizePlayer()" title="Minimizar">—</button>
+        <button class="yt-modal-close" onclick="closeYtModal()" title="Cerrar">✕</button>
+      </div>
     </div>
     <iframe id="yt-modal-frame" allow="autoplay; encrypted-media" allowfullscreen></iframe>
-    <div class="yt-warning">⚠️ Si el video no carga, <a id="yt-open-link" href="#" target="_blank" style="color:var(--gold);text-decoration:underline">ábrelo en YouTube directamente</a> — algunos videos bloquean la reproducción embebida.</div>
+    <div class="yt-warning">⚠️ Si el video no carga, <a id="yt-open-link" href="#" target="_blank" style="color:var(--gold);text-decoration:underline">ábrelo en YouTube</a></div>
   </div>
 </div>
 
@@ -1390,7 +1398,6 @@ let currentYtUrl = '';
 let currentYtId = '';
 
 function openYtModal(){
-  if(!currentYtUrl) return;
   const modal = document.getElementById('yt-modal');
   const frame = document.getElementById('yt-modal-frame');
   const link = document.getElementById('yt-open-link');
@@ -1398,18 +1405,31 @@ function openYtModal(){
   const t = playlist[currentTrack];
   if(!t) return;
   title.textContent = '🎵 ' + t.name;
-  if(t.type==='youtube'){
-    frame.src = `https://www.youtube.com/embed/${t.ytId}?autoplay=1&controls=1`;
-    link.href = `https://www.youtube.com/watch?v=${t.ytId}`;
-  } else if(t.type==='spotify'){
-    frame.src = `https://open.spotify.com/embed/${t.spType}/${t.spId}`;
-    link.href = t.url;
-  }
+  // Only reload iframe if track changed (prevents interrupting music on panel switch)
+  const newSrc = t.type==='youtube'
+    ? `https://www.youtube.com/embed/${t.ytId}?autoplay=1&controls=1`
+    : t.type==='spotify'
+    ? `https://open.spotify.com/embed/${t.spType}/${t.spId}`
+    : '';
+  if(newSrc && frame.src !== newSrc) frame.src = newSrc;
+  if(t.type==='youtube') link.href = `https://www.youtube.com/watch?v=${t.ytId}`;
+  else link.href = t.url;
   modal.classList.add('open');
+  modal.classList.remove('minimized');
 }
 function closeYtModal(){
+  // Stop music completely
   document.getElementById('yt-modal').classList.remove('open');
   document.getElementById('yt-modal-frame').src='';
+  isPlaying=false;
+  clearInterval(progressInterval);
+  document.getElementById('play-btn').textContent='▶';
+}
+function toggleMinimizePlayer(){
+  const modal = document.getElementById('yt-modal');
+  modal.classList.toggle('minimized');
+  const btn = modal.querySelector('.yt-modal-min');
+  btn.textContent = modal.classList.contains('minimized') ? '▲' : '—';
 }
 function playTrack(i){
   currentTrack=i;
