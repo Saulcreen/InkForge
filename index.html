@@ -1198,7 +1198,9 @@ function sendToCorrector(){
 }
 renderChapters();
 
-// ===================== DICTIONARY (Claude API) =====================
+// ===================== DICTIONARY (Gemini API) =====================
+const GEMINI_API_KEY = 'AIzaSyAMXCl_0hKSzTyUOZ6Z0fNZWJMqEdk0HjI';
+
 async function searchDict(){
   const q = document.getElementById('dict-input').value.trim();
   const res = document.getElementById('dict-results');
@@ -1207,28 +1209,27 @@ async function searchDict(){
   res.innerHTML=`<div class="loading"><div class="loading-dot"></div><div class="loading-dot"></div><div class="loading-dot"></div><span style="margin-left:8px">Consultando diccionario...</span></div>`;
 
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: 'Eres un diccionario literario experto en español. Devuelve ÚNICAMENTE un objeto JSON válido, sin backticks ni texto extra.',
-        messages: [{
-          role: 'user',
-          content: `Para la palabra "${q}" devuelve este JSON exacto:
-{"word":"${q}","type":"categoría gramatical","def":"definición clara en 1-2 oraciones","syns":["sin1","sin2","sin3","sin4","sin5","sin6","sin7","sin8","sin9","sin10"],"antonyms":["ant1","ant2","ant3"],"example":"Oración literaria de ejemplo","origin":"Breve etimología"}
-Sinónimos variados: formales, literarios, coloquiales y técnicos. Prioriza la acepción más usada en literatura.`
-        }]
-      })
-    });
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          contents: [{parts: [{text:
+            `Eres un diccionario literario experto en español. Para la palabra "${q}" devuelve ÚNICAMENTE este JSON sin backticks ni texto extra:\n{"word":"${q}","type":"categoría gramatical","def":"definición clara en 1-2 oraciones","syns":["sin1","sin2","sin3","sin4","sin5","sin6","sin7","sin8","sin9","sin10"],"antonyms":["ant1","ant2","ant3"],"example":"Oración literaria de ejemplo","origin":"Breve etimología"}\nSinónimos variados: formales, literarios, coloquiales y técnicos.`
+          }]}],
+          generationConfig: { temperature: 0.2, maxOutputTokens: 800 }
+        })
+      }
+    );
 
     const data = await resp.json();
-    const raw = data.content?.[0]?.text || '{}';
+    if(data.error) throw new Error(data.error.message);
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
     const clean = raw.replace(/```json|```/g,'').trim();
     let d;
-    try { d = JSON.parse(clean); } catch(e) { throw new Error('Respuesta inválida del servidor'); }
-    if(!d.word) throw new Error('Sin resultado para esta palabra');
+    try { d = JSON.parse(clean); } catch(e) { throw new Error('Respuesta inválida'); }
+    if(!d.word) throw new Error('Sin resultado');
 
     res.innerHTML=`
       <div style="background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:24px">
@@ -1244,7 +1245,7 @@ Sinónimos variados: formales, literarios, coloquiales y técnicos. Prioriza la 
         ${d.antonyms?.length ? `
         <div style="font-size:12px;color:var(--text3);margin:14px 0 8px;text-transform:uppercase;letter-spacing:1px">Antónimos</div>
         <div class="syns-grid">${d.antonyms.map(a=>`<div class="syn-tag" style="border-color:rgba(248,113,113,.25);color:var(--red)" onclick="copySynAndSearch('${a.replace(/'/g,"\\'")}','${q.replace(/'/g,"\\'")}' )">${a}</div>`).join('')}</div>` : ''}
-        <div style="margin-top:12px;font-size:11px;color:var(--text3)">⚡ Powered by Claude AI</div>
+        <div style="margin-top:12px;font-size:11px;color:var(--text3)">⚡ Powered by Gemini AI</div>
       </div>`;
   } catch(e) {
     res.innerHTML=`<div style="background:var(--bg3);border:1px solid rgba(248,113,113,.2);border-radius:14px;padding:24px;text-align:center">
